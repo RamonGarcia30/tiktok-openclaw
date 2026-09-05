@@ -64,7 +64,8 @@ function requireConfig() {
 }
 
 function pkceVerifier() { return randomBytes(48).toString('base64url'); }
-function pkceChallenge(verifier) { return createHash('sha256').update(verifier).digest('base64url'); }
+// TikTok Login Kit for Desktop requires a hexadecimal SHA-256 PKCE challenge.
+function pkceChallenge(verifier) { return createHash('sha256').update(verifier).digest('hex'); }
 
 async function tiktok(path, token, body) {
   const response = await fetch(`https://open.tiktokapis.com${path}`, {
