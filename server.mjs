@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, mkdir, writeFile, readFile as readTextFile } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, unlink, readFile as readTextFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { randomBytes, createHash } from 'node:crypto';
 import { URL } from 'node:url';
@@ -117,7 +117,7 @@ async function route(req, res) {
       const creator = await tiktok('/v2/post/publish/creator_info/query/', token.access_token);
       return send(res, { status: creator.httpStatus, type: 'application/json; charset=utf-8', body: JSON.stringify(creator.data) });
     }
-    if (req.method === 'GET' && requestUrl.pathname === '/logout') { try { await readFile(TOKEN_FILE); } catch {} return send(res, htmlPage('<h1>Desconectado</h1><p>Apague o arquivo local <code>.data/tiktok-token.json</code> para remover o token salvo.</p><a href="/">Voltar</a>')); }
+    if (req.method === 'GET' && requestUrl.pathname === '/logout') { try { await unlink(TOKEN_FILE); } catch {} return send(res, htmlPage('<h1>Desconectado</h1><p>O token local foi removido.</p><a href="/">Conectar novamente</a>')); }
     if (req.method === 'POST' && requestUrl.pathname === '/publish') {
       const raw = await new Promise((resolve, reject) => { let data = ''; req.on('data', chunk => { data += chunk; if (data.length > 100_000) reject(new Error('Formulário muito grande.')); }); req.on('end', () => resolve(data)); req.on('error', reject); });
       const form = new URLSearchParams(raw);
