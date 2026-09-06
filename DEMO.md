@@ -1,6 +1,6 @@
 # Demonstrador local
 
-Este demonstrador usa Login Kit + Content Posting API para publicação direta de fotos (`video.publish`). As imagens precisam estar em uma URL HTTPS pública dentro do prefixo verificado no TikTok.
+Este demonstrador usa Login Kit + Content Posting API para publicação direta de carrosséis com 10 fotos e de vídeos (`video.publish`). As fotos precisam estar em URLs HTTPS públicas dentro do prefixo verificado no TikTok. Vídeos são enviados localmente ao TikTok com upload em partes.
 
 ## Configuração
 
@@ -16,6 +16,7 @@ Este demonstrador usa Login Kit + Content Posting API para publicação direta d
    npm start
    ```
 
-5. Abra `http://localhost:3000`, conecte a conta, informe a URL pública da imagem e publique.
+5. Abra `http://localhost:3000` e conecte a conta.
+6. Para fotos, informe 10 URLs públicas e confirme a publicação; para vídeos, selecione um arquivo MP4, MOV ou WebM e confirme o envio.
 
 O token fica em `.data/tiktok-token.json`, que está no `.gitignore` e não deve ser enviado ao GitHub.

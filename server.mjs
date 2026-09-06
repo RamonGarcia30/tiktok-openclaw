@@ -76,12 +76,53 @@ async function tiktok(path, token, body) {
   return { httpStatus: response.status, data: await response.json() };
 }
 
+async function readRequestBody(req, limit = 4 * 1024 * 1024 * 1024) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw new Error('O vídeo excede o limite de 4 GB.');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+function parseMultipart(body, contentType) {
+  const match = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  if (!match) throw new Error('Formulário multipart inválido.');
+  const boundary = Buffer.from(`--${match[1] || match[2]}`);
+  const fields = new Map();
+  let position = 0;
+  while (position < body.length) {
+    const start = body.indexOf(boundary, position);
+    if (start < 0) break;
+    const headerStart = start + boundary.length + 2;
+    if (body.subarray(start, start + boundary.length + 2).toString() === `${boundary.toString()}--`) break;
+    const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'), headerStart);
+    if (headerEnd < 0) break;
+    const headers = body.subarray(headerStart, headerEnd).toString();
+    const contentStart = headerEnd + 4;
+    const nextBoundary = body.indexOf(boundary, contentStart);
+    if (nextBoundary < 0) break;
+    const contentEnd = nextBoundary - 2;
+    const disposition = headers.match(/name="([^"]+)"(?:; filename="([^"]*)")?/i);
+    if (disposition) fields.set(disposition[1], { value: body.subarray(contentStart, contentEnd), filename: disposition[2] || '', contentType: headers.match(/\r?\nContent-Type:\s*([^\r\n]+)/i)?.[1] || '' });
+    position = nextBoundary;
+  }
+  return fields;
+}
+
+function multipartValue(fields, name) {
+  const part = fields.get(name);
+  return part?.value?.toString('utf8') || '';
+}
+
 async function homepage() {
   const token = await readToken();
   const connected = Boolean(token?.access_token);
-  return htmlPage(`<div class="top"><div><h1>OpenClaw TikTok Publisher</h1><p class="muted">Demonstrador local para publicar imagens autorizadas diretamente no TikTok.</p></div>${connected ? '<a href="/logout">Desconectar</a>' : ''}</div>
+  return htmlPage(`<div class="top"><div><h1>OpenClaw TikTok Publisher</h1><p class="muted">Demonstrador local para publicar carrosséis de imagens e vídeos autorizados diretamente no TikTok.</p></div>${connected ? '<a href="/logout">Desconectar</a>' : ''}</div>
 ${connected ? `<p class="status ok">Conta TikTok conectada.</p>
-<form method="post" action="/publish" id="publish-form"><fieldset><legend>Imagens do carrossel (10)</legend>${Array.from({length: 10}, (_, index) => `<label for="image-${index}">Imagem ${index + 1}</label><input id="image-${index}" name="image" type="url" placeholder="https://ramongarcia30.github.io/tiktok-openclaw/imagem-${index + 1}.jpg" ${index === 0 ? 'required' : ''}>`).join('')}</fieldset><div id="previews" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:16px"></div><p class="muted">Informe 10 URLs HTTPS públicas dentro do prefixo verificado no TikTok. O TikTok aceita até 35 fotos por publicação.</p><p id="creator" class="muted">Consultando conta TikTok...</p><label for="title">Título</label><input id="title" name="title" maxlength="90" placeholder="Título da publicação" required><label for="description">Descrição</label><input id="description" name="description" maxlength="4000" placeholder="#arte #tiktok"><label for="privacy">Privacidade</label><select id="privacy" name="privacy" required><option value="" selected disabled>Selecione uma opção</option></select><label><input id="allow-comment" name="allow_comment" value="true" type="checkbox" style="width:auto;margin-right:8px"> Permitir comentários</label><label><input id="commercial" name="commercial" value="true" type="checkbox" style="width:auto;margin-right:8px"> Este conteúdo promove uma marca, produto ou serviço</label><div id="commercial-options" style="display:none"><label><input name="brand_organic" value="true" type="checkbox" style="width:auto;margin-right:8px"> Minha própria marca</label><label><input name="brand_content" value="true" type="checkbox" style="width:auto;margin-right:8px"> Marca de terceiros</label></div><label><input id="consent" name="consent" value="true" type="checkbox" style="width:auto;margin-right:8px" required> Ao publicar, concordo com a <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer">Confirmação de Uso de Música do TikTok</a>.</label><button id="publish-button" type="submit" disabled>Publicar carrossel diretamente</button></form><script>const images=[...document.querySelectorAll('input[name="image"]')],previews=document.getElementById('previews'),form=document.getElementById('publish-form'),consent=document.getElementById('consent'),button=document.getElementById('publish-button'),commercial=document.getElementById('commercial'),options=document.getElementById('commercial-options');images.forEach(image=>image.addEventListener('input',()=>{previews.replaceChildren(...images.filter(input=>input.value).map(input=>{const img=document.createElement('img');img.src=input.value;img.alt='Prévia';img.style='width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px';return img}))}));commercial.addEventListener('change',()=>{options.style.display=commercial.checked?'block':'none'});consent.addEventListener('change',()=>{button.disabled=!consent.checked});fetch('/api/creator-info').then(r=>r.json()).then(({data,error})=>{if(error?.code!=='ok')throw Error(error.message);document.getElementById('creator').textContent='Conta conectada: @'+data.creator_username+' ('+data.creator_nickname+')';const select=document.getElementById('privacy');for(const value of data.privacy_level_options||[]){const option=document.createElement('option');option.value=value;option.textContent={PUBLIC_TO_EVERYONE:'Público',MUTUAL_FOLLOW_FRIENDS:'Amigos',FOLLOWER_OF_CREATOR:'Seguidores',SELF_ONLY:'Somente eu'}[value]||value;select.appendChild(option)}document.getElementById('allow-comment').disabled=Boolean(data.comment_disabled)}).catch(error=>{document.getElementById('creator').textContent='Não foi possível consultar as configurações da conta: '+error.message});</script>` : `<p>O login é feito pelo TikTok. O aplicativo só solicita as permissões configuradas e armazena o token localmente.</p><a href="/auth/tiktok"><button type="button">Conectar com TikTok</button></a>`}
+<form method="post" action="/publish" id="publish-form"><fieldset><legend>Imagens do carrossel (10)</legend>${Array.from({length: 10}, (_, index) => `<label for="image-${index}">Imagem ${index + 1}</label><input id="image-${index}" name="image" type="url" placeholder="https://ramongarcia30.github.io/tiktok-openclaw/imagem-${index + 1}.jpg" ${index === 0 ? 'required' : ''}>`).join('')}</fieldset><div id="previews" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:16px"></div><p class="muted">Informe 10 URLs HTTPS públicas dentro do prefixo verificado no TikTok. O TikTok aceita até 35 fotos por publicação.</p><p id="creator" class="muted">Consultando conta TikTok...</p><label for="title">Título</label><input id="title" name="title" maxlength="90" placeholder="Título da publicação" required><label for="description">Descrição</label><input id="description" name="description" maxlength="4000" placeholder="#arte #tiktok"><label for="privacy">Privacidade</label><select id="privacy" name="privacy" required><option value="" selected disabled>Selecione uma opção</option></select><label><input id="allow-comment" name="allow_comment" value="true" type="checkbox" style="width:auto;margin-right:8px"> Permitir comentários</label><label><input id="commercial" name="commercial" value="true" type="checkbox" style="width:auto;margin-right:8px"> Este conteúdo promove uma marca, produto ou serviço</label><div id="commercial-options" style="display:none"><label><input name="brand_organic" value="true" type="checkbox" style="width:auto;margin-right:8px"> Minha própria marca</label><label><input name="brand_content" value="true" type="checkbox" style="width:auto;margin-right:8px"> Marca de terceiros</label></div><label><input id="consent" name="consent" value="true" type="checkbox" style="width:auto;margin-right:8px" required> Ao publicar, concordo com a <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer">Confirmação de Uso de Música do TikTok</a>.</label><button id="publish-button" type="submit" disabled>Publicar carrossel diretamente</button></form><h2>Publicar vídeo</h2><form method="post" action="/publish" enctype="multipart/form-data"><label for="video">Arquivo de vídeo (MP4, MOV ou WebM)</label><input id="video" name="video" type="file" accept="video/mp4,video/quicktime,video/webm" required><p class="muted">O vídeo será enviado diretamente ao TikTok. Limite: 4 GB.</p><label for="video-title">Título</label><input id="video-title" name="title" maxlength="2200" placeholder="Título da publicação" required><label for="video-privacy">Privacidade</label><select id="video-privacy" name="privacy" required><option value="" selected disabled>Selecione uma opção</option></select><label><input name="allow_comment" value="true" type="checkbox" style="width:auto;margin-right:8px"> Permitir comentários</label><label><input name="commercial" value="true" type="checkbox" style="width:auto;margin-right:8px"> Este conteúdo promove uma marca, produto ou serviço</label><label><input id="video-consent" name="consent" value="true" type="checkbox" style="width:auto;margin-right:8px" required> Confirmo que quero enviar este vídeo para publicação no TikTok.</label><button id="video-button" type="submit" disabled>Publicar vídeo diretamente</button></form><script>const images=[...document.querySelectorAll('input[name="image"]')],previews=document.getElementById('previews'),form=document.getElementById('publish-form'),consent=document.getElementById('consent'),button=document.getElementById('publish-button'),commercial=document.getElementById('commercial'),options=document.getElementById('commercial-options');images.forEach(image=>image.addEventListener('input',()=>{previews.replaceChildren(...images.filter(input=>input.value).map(input=>{const img=document.createElement('img');img.src=input.value;img.alt='Prévia';img.style='width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px';return img}))}));commercial.addEventListener('change',()=>{options.style.display=commercial.checked?'block':'none'});consent.addEventListener('change',()=>{button.disabled=!consent.checked});fetch('/api/creator-info').then(r=>r.json()).then(({data,error})=>{if(error?.code!=='ok')throw Error(error.message);document.getElementById('creator').textContent='Conta conectada: @'+data.creator_username+' ('+data.creator_nickname+')';const selects=[...document.querySelectorAll("select[name=privacy]")];for(const select of selects){for(const value of data.privacy_level_options||[]){const option=document.createElement('option');option.value=value;option.textContent={PUBLIC_TO_EVERYONE:'Público',MUTUAL_FOLLOW_FRIENDS:'Amigos',FOLLOWER_OF_CREATOR:'Seguidores',SELF_ONLY:'Somente eu'}[value]||value;select.appendChild(option)}}document.getElementById('allow-comment').disabled=Boolean(data.comment_disabled);document.getElementById('video-consent').addEventListener('change',()=>{document.getElementById('video-button').disabled=!document.getElementById('video-consent').checked})}).catch(error=>{document.getElementById('creator').textContent='Não foi possível consultar as configurações da conta: '+error.message});</script>` : `<p>O login é feito pelo TikTok. O aplicativo só solicita as permissões configuradas e armazena o token localmente.</p><a href="/auth/tiktok"><button type="button">Conectar com TikTok</button></a>`}
 <div class="links"><a href="/privacy.html">Privacidade</a><a href="/terms.html">Termos</a></div>`);
 }
 
@@ -119,8 +160,43 @@ async function route(req, res) {
     }
     if (req.method === 'GET' && requestUrl.pathname === '/logout') { try { await unlink(TOKEN_FILE); } catch {} return send(res, htmlPage('<h1>Desconectado</h1><p>O token local foi removido.</p><a href="/">Conectar novamente</a>')); }
     if (req.method === 'POST' && requestUrl.pathname === '/publish') {
-      const raw = await new Promise((resolve, reject) => { let data = ''; req.on('data', chunk => { data += chunk; if (data.length > 100_000) reject(new Error('Formulário muito grande.')); }); req.on('end', () => resolve(data)); req.on('error', reject); });
-      const form = new URLSearchParams(raw);
+      const contentType = req.headers['content-type'] || '';
+      const raw = await readRequestBody(req);
+      let form;
+      let videoPart;
+      if (contentType.toLowerCase().startsWith('multipart/form-data')) {
+        const fields = parseMultipart(raw, contentType);
+        form = { get: name => multipartValue(fields, name), getAll: name => fields.has(name) ? [multipartValue(fields, name)] : [] };
+        videoPart = fields.get('video');
+      } else {
+        form = new URLSearchParams(raw.toString('utf8'));
+      }
+      if (videoPart?.filename) {
+        if (!videoPart.value.length) throw new Error('Selecione um arquivo de vídeo.');
+        if (videoPart.value.length > 4 * 1024 * 1024 * 1024) throw new Error('O vídeo excede o limite de 4 GB.');
+        const token = await readToken();
+        if (!token?.access_token) return redirect(res, '/auth/tiktok');
+        const creator = await tiktok('/v2/post/publish/creator_info/query/', token.access_token);
+        if (creator.data?.error?.code !== 'ok') throw new Error(creator.data?.error?.message || 'Não foi possível consultar as configurações do criador.');
+        const options = creator.data.data.privacy_level_options || [];
+        const privacy = options.includes(form.get('privacy')) ? form.get('privacy') : options[0];
+        const size = videoPart.value.length;
+        const chunkSize = size < 5 * 1024 * 1024 ? size : 10 * 1024 * 1024;
+        const totalChunkCount = Math.ceil(size / chunkSize);
+        const commercial = form.get('commercial') === 'true';
+        const initialized = await tiktok('/v2/post/publish/video/init/', token.access_token, { post_info: { title: form.get('title') || undefined, privacy_level: privacy, disable_comment: form.get('allow_comment') !== 'true', disable_duet: false, disable_stitch: false, brand_content_toggle: commercial, brand_organic_toggle: false }, source_info: { source: 'FILE_UPLOAD', video_size: size, chunk_size: chunkSize, total_chunk_count: totalChunkCount } });
+        if (initialized.data?.error?.code !== 'ok') throw new Error(initialized.data?.error?.message || JSON.stringify(initialized.data));
+        const uploadUrl = initialized.data.data.upload_url;
+        const mimeType = videoPart.contentType || 'video/mp4';
+        for (let offset = 0; offset < size;) {
+          const end = Math.min(offset + chunkSize, size);
+          const chunk = videoPart.value.subarray(offset, end);
+          const upload = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType, 'Content-Length': String(chunk.length), 'Content-Range': `bytes ${offset}-${end - 1}/${size}` }, body: chunk });
+          if (!upload.ok) throw new Error(`Falha ao enviar o vídeo ao TikTok (HTTP ${upload.status}).`);
+          offset = end;
+        }
+        return send(res, htmlPage(`<h1>Vídeo enviado</h1><p class="status ok">O TikTok aceitou o vídeo para publicação.</p><p>Publish ID: <code>${initialized.data.data.publish_id}</code></p><p class="muted">Em modo não auditado, o TikTok pode restringir a visibilidade da publicação.</p><a href="/">Publicar outro conteúdo</a>`));
+      }
       const images = form.getAll('image').filter(Boolean);
       if (images.length !== 10) throw new Error('Informe exatamente 10 imagens para o carrossel.');
       if (images.some(image => !image.startsWith('https://'))) throw new Error('Todas as imagens devem usar HTTPS.');
